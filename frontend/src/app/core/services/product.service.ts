@@ -13,7 +13,6 @@ export class ProductService {
 
   getAll(): Observable<Product[]> {
     return this.http.get<Product[]>(this.url).pipe(
-      retry(1),
       catchError(this.handleError)
     );
   }
@@ -38,6 +37,12 @@ export class ProductService {
 
   delete(id: number): Observable<void> {
     return this.http.delete<void>(`${this.url}/${id}`).pipe(
+      catchError(this.handleError)
+    );
+  }
+
+  suggestDescription(code: string): Observable<{ description: string }> {
+    return this.http.post<{ description: string }>(`${this.url}/suggest-description`, { code }).pipe(
       catchError(this.handleError)
     );
   }

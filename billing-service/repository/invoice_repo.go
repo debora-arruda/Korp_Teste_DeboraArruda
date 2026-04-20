@@ -19,11 +19,12 @@ func NewInvoiceRepository(db *sqlx.DB) *InvoiceRepository {
 func (r *InvoiceRepository) Migrate() error {
 	_, err := r.db.Exec(`
 		CREATE TABLE IF NOT EXISTS invoices (
-			id         SERIAL PRIMARY KEY,
-			number     BIGINT UNIQUE NOT NULL,
-			status     VARCHAR(10) NOT NULL DEFAULT 'open',
-			created_at TIMESTAMPTZ DEFAULT NOW(),
-			updated_at TIMESTAMPTZ DEFAULT NOW()
+			id              SERIAL PRIMARY KEY,
+			number          BIGINT UNIQUE NOT NULL,
+			status          VARCHAR(10) NOT NULL DEFAULT 'open',
+			idempotency_key VARCHAR(100) UNIQUE,
+			created_at      TIMESTAMPTZ DEFAULT NOW(),
+			updated_at      TIMESTAMPTZ DEFAULT NOW()
 		);
 		CREATE TABLE IF NOT EXISTS invoice_items (
 			id                  SERIAL PRIMARY KEY,
@@ -34,6 +35,9 @@ func (r *InvoiceRepository) Migrate() error {
 			quantity            INT NOT NULL CHECK (quantity > 0)
 		);
 		CREATE SEQUENCE IF NOT EXISTS invoice_number_seq START 1;
+		CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
+		CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice_id ON invoice_items(invoice_id);
+		ALTER TABLE invoices ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(100) UNIQUE;
 	`)
 	return err
 }
@@ -81,6 +85,16 @@ func (r *InvoiceRepository) findItems(invoiceID int64) ([]models.InvoiceItem, er
 }
 
 func (r *InvoiceRepository) Create(req models.CreateInvoiceRequest, productDetails map[int64]struct{ Code, Description string }) (*models.Invoice, error) {
+	if req.IdempotencyKey != "" {
+		var existing models.Invoice
+		err := r.db.Get(&existing, `SELECT * FROM invoices WHERE idempotency_key = $1`, req.IdempotencyKey)
+		if err == nil {
+			items, _ := r.findItems(existing.ID)
+			existing.Items = items
+			return &existing, nil
+		}
+	}
+
 	tx, err := r.db.Beginx()
 	if err != nil {
 		return nil, err
@@ -94,10 +108,17 @@ func (r *InvoiceRepository) Create(req models.CreateInvoiceRequest, productDetai
 	}
 
 	var inv models.Invoice
-	err = tx.QueryRowx(
-		`INSERT INTO invoices (number, status) VALUES ($1, 'open') RETURNING *`,
-		number,
-	).StructScan(&inv)
+	if req.IdempotencyKey != "" {
+		err = tx.QueryRowx(
+			`INSERT INTO invoices (number, status, idempotency_key) VALUES ($1, 'open', $2) RETURNING *`,
+			number, req.IdempotencyKey,
+		).StructScan(&inv)
+	} else {
+		err = tx.QueryRowx(
+			`INSERT INTO invoices (number, status) VALUES ($1, 'open') RETURNING *`,
+			number,
+		).StructScan(&inv)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -121,10 +142,15 @@ func (r *InvoiceRepository) Create(req models.CreateInvoiceRequest, productDetai
 	return r.FindByID(inv.ID)
 }
 
+func (r *InvoiceRepository) ReopenInvoice(id int64) error {
+	_, err := r.db.Exec(`UPDATE invoices SET status = 'open', updated_at = NOW() WHERE id = $1`, id)
+	return err
+}
+
 func (r *InvoiceRepository) CloseInvoice(id int64) (*models.Invoice, error) {
 	var inv models.Invoice
 	err := r.db.QueryRowx(
-		`UPDATE invoices SET status = 'closed', updated_at = NOW() WHERE id = $1 RETURNING *`,
+		`UPDATE invoices SET status = 'closed', updated_at = NOW() WHERE id = $1 AND status = 'open' RETURNING *`,
 		id,
 	).StructScan(&inv)
 	if errors.Is(err, sql.ErrNoRows) {

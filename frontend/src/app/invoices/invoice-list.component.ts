@@ -1,8 +1,6 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router, RouterModule } from '@angular/router';
-import { Subject } from 'rxjs';
-import { takeUntil } from 'rxjs/operators';
 import { MatTableModule } from '@angular/material/table';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -32,16 +30,16 @@ import { Invoice } from '../core/models/invoice.model';
       </mat-card-header>
 
       <mat-card-content>
-        <div *ngIf="loading" class="loading-wrapper">
+        <div *ngIf="loading()" class="loading-wrapper">
           <mat-spinner diameter="40"></mat-spinner>
         </div>
 
-        <div *ngIf="error" class="error-banner">
-          <mat-icon>error</mat-icon> {{ error }}
+        <div *ngIf="error()" class="error-banner">
+          <mat-icon>error</mat-icon> {{ error() }}
           <button mat-button (click)="load()">Tentar novamente</button>
         </div>
 
-        <table mat-table [dataSource]="invoices" *ngIf="!loading && !error">
+        <table mat-table [dataSource]="invoices()" *ngIf="!loading() && !error()">
           <ng-container matColumnDef="number">
             <th mat-header-cell *matHeaderCellDef>Número</th>
             <td mat-cell *matCellDef="let inv">#{{ inv.number }}</td>
@@ -90,27 +88,22 @@ import { Invoice } from '../core/models/invoice.model';
     .no-data { text-align: center; padding: 24px; color: #888; }
   `]
 })
-export class InvoiceListComponent implements OnInit, OnDestroy {
-  invoices: Invoice[] = [];
+export class InvoiceListComponent implements OnInit {
+  invoices = signal<Invoice[]>([]);
+  loading = signal(false);
+  error = signal('');
   columns = ['number', 'status', 'items', 'createdAt', 'actions'];
-  loading = false;
-  error = '';
-  private destroy$ = new Subject<void>();
 
   constructor(private invoiceService: InvoiceService, private snack: MatSnackBar, private router: Router) {}
 
   ngOnInit() { this.load(); }
 
-  ngOnDestroy() { this.destroy$.next(); this.destroy$.complete(); }
-
   load() {
-    this.loading = true;
-    this.error = '';
-    this.invoiceService.getAll()
-      .pipe(takeUntil(this.destroy$))
-      .subscribe({
-        next: (data) => { this.invoices = data; this.loading = false; },
-        error: (err) => { this.error = err.message; this.loading = false; }
-      });
+    this.loading.set(true);
+    this.error.set('');
+    this.invoiceService.getAll().subscribe({
+      next: (data) => { this.invoices.set(data ?? []); this.loading.set(false); },
+      error: (err) => { this.error.set(err.message); this.loading.set(false); }
+    });
   }
 }

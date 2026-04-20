@@ -5,6 +5,7 @@ import { MatDialogRef, MAT_DIALOG_DATA, MatDialogModule } from '@angular/materia
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatButtonModule } from '@angular/material/button';
+import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { ProductService } from '../core/services/product.service';
@@ -16,7 +17,7 @@ import { Product } from '../core/models/product.model';
   imports: [
     CommonModule, ReactiveFormsModule,
     MatDialogModule, MatFormFieldModule, MatInputModule,
-    MatButtonModule, MatProgressSpinnerModule, MatSnackBarModule,
+    MatButtonModule, MatIconModule, MatProgressSpinnerModule, MatSnackBarModule,
   ],
   template: `
     <h2 mat-dialog-title>{{ isEdit ? 'Editar' : 'Novo' }} Produto</h2>
@@ -33,6 +34,13 @@ import { Product } from '../core/models/product.model';
           <input matInput formControlName="description" placeholder="Nome do produto">
           <mat-error *ngIf="form.get('description')?.hasError('required')">Campo obrigatório</mat-error>
         </mat-form-field>
+        <div class="ai-row">
+          <button mat-stroked-button type="button" (click)="suggestWithAI()" [disabled]="suggestingAI || !form.get('code')?.value" class="ai-btn">
+            <mat-spinner *ngIf="suggestingAI" diameter="16" style="display:inline-block;margin-right:6px"></mat-spinner>
+            <mat-icon *ngIf="!suggestingAI" style="font-size:16px;height:16px;width:16px">auto_awesome</mat-icon>
+            {{ suggestingAI ? 'Consultando IA...' : 'Sugerir descrição com IA' }}
+          </button>
+        </div>
 
         <mat-form-field appearance="outline" class="full-width">
           <mat-label>Saldo em Estoque</mat-label>
@@ -51,11 +59,12 @@ import { Product } from '../core/models/product.model';
       </mat-dialog-actions>
     </form>
   `,
-  styles: [`.full-width { width: 100%; margin-bottom: 8px; }`]
+  styles: [`.full-width { width: 100%; margin-bottom: 8px; } .ai-row { margin-bottom: 12px; } .ai-btn { font-size: 13px; }`]
 })
 export class ProductFormComponent implements OnInit {
   form!: FormGroup;
   saving = false;
+  suggestingAI = false;
   isEdit = false;
 
   constructor(
@@ -72,6 +81,23 @@ export class ProductFormComponent implements OnInit {
       code: [this.data?.code ?? '', Validators.required],
       description: [this.data?.description ?? '', Validators.required],
       balance: [this.data?.balance ?? 0, [Validators.required, Validators.min(0)]]
+    });
+  }
+
+  suggestWithAI() {
+    const code = this.form.get('code')?.value;
+    if (!code) return;
+    this.suggestingAI = true;
+    this.productService.suggestDescription(code).subscribe({
+      next: (res) => {
+        this.form.get('description')?.setValue(res.description);
+        this.suggestingAI = false;
+        this.snack.open('Descrição sugerida pela IA!', 'OK', { duration: 3000 });
+      },
+      error: (err) => {
+        this.snack.open(err.message, 'Fechar', { duration: 5000 });
+        this.suggestingAI = false;
+      }
     });
   }
 

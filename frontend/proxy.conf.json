@@ -1,0 +1,14 @@
+{
+  "/api/inventory": {
+    "target": "http://localhost:8081",
+    "secure": false,
+    "rewrite": true,
+    "pathRewrite": { "^/api/inventory": "/api" }
+  },
+  "/api/billing": {
+    "target": "http://localhost:8082",
+    "secure": false,
+    "rewrite": true,
+    "pathRewrite": { "^/api/billing": "/api" }
+  }
+}

@@ -1,0 +1,10 @@
+{
+    "configurations": [
+        {
+            "type": "msedge",
+            "name": "http://localhost:4200/invoices/new",
+            "request": "launch",
+            "url": "http://localhost:4200/invoices/new"
+        }
+    ]
+}

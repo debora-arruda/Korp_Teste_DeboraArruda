@@ -1,8 +1,6 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
-import { Subject } from 'rxjs';
-import { takeUntil } from 'rxjs/operators';
 import { MatTableModule } from '@angular/material/table';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -33,16 +31,16 @@ import { ProductFormComponent } from './product-form.component';
       </mat-card-header>
 
       <mat-card-content>
-        <div *ngIf="loading" class="loading-wrapper">
+        <div *ngIf="loading()" class="loading-wrapper">
           <mat-spinner diameter="40"></mat-spinner>
         </div>
 
-        <div *ngIf="error" class="error-banner">
-          <mat-icon>error</mat-icon> {{ error }}
+        <div *ngIf="error()" class="error-banner">
+          <mat-icon>error</mat-icon> {{ error() }}
           <button mat-button (click)="load()">Tentar novamente</button>
         </div>
 
-        <table mat-table [dataSource]="products" *ngIf="!loading && !error">
+        <table mat-table [dataSource]="products()" *ngIf="!loading() && !error()">
           <ng-container matColumnDef="code">
             <th mat-header-cell *matHeaderCellDef>Código</th>
             <td mat-cell *matCellDef="let p">{{ p.code }}</td>
@@ -89,12 +87,11 @@ import { ProductFormComponent } from './product-form.component';
     .no-data { text-align: center; padding: 24px; color: #888; }
   `]
 })
-export class ProductListComponent implements OnInit, OnDestroy {
-  products: Product[] = [];
+export class ProductListComponent implements OnInit {
+  products = signal<Product[]>([]);
+  loading = signal(false);
+  error = signal('');
   columns = ['code', 'description', 'balance', 'actions'];
-  loading = false;
-  error = '';
-  private destroy$ = new Subject<void>();
 
   constructor(
     private productService: ProductService,
@@ -104,37 +101,25 @@ export class ProductListComponent implements OnInit, OnDestroy {
 
   ngOnInit() { this.load(); }
 
-  ngOnDestroy() {
-    this.destroy$.next();
-    this.destroy$.complete();
-  }
-
   load() {
-    this.loading = true;
-    this.error = '';
-    this.productService.getAll()
-      .pipe(takeUntil(this.destroy$))
-      .subscribe({
-        next: (data) => { this.products = data; this.loading = false; },
-        error: (err) => { this.error = err.message; this.loading = false; }
-      });
+    this.loading.set(true);
+    this.error.set('');
+    this.productService.getAll().subscribe({
+      next: (data) => { this.products.set(data ?? []); this.loading.set(false); },
+      error: (err) => { this.error.set(err.message); this.loading.set(false); }
+    });
   }
 
   openForm(product?: Product) {
-    const ref = this.dialog.open(ProductFormComponent, {
-      width: '500px',
-      data: product ?? null
-    });
+    const ref = this.dialog.open(ProductFormComponent, { width: '500px', data: product ?? null });
     ref.afterClosed().subscribe(saved => { if (saved) this.load(); });
   }
 
   delete(product: Product) {
     if (!confirm(`Excluir "${product.description}"?`)) return;
-    this.productService.delete(product.id)
-      .pipe(takeUntil(this.destroy$))
-      .subscribe({
-        next: () => { this.snack.open('Produto excluído', 'OK', { duration: 3000 }); this.load(); },
-        error: (err) => this.snack.open(err.message, 'Fechar', { duration: 5000 })
-      });
+    this.productService.delete(product.id).subscribe({
+      next: () => { this.snack.open('Produto excluído', 'OK', { duration: 3000 }); this.load(); },
+      error: (err) => this.snack.open(err.message, 'Fechar', { duration: 5000 })
+    });
   }
 }

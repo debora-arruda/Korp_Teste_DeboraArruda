@@ -1,9 +1,7 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { Router } from '@angular/router';
+import { Router, RouterModule } from '@angular/router';
 import { ReactiveFormsModule, FormBuilder, FormGroup, FormArray, Validators } from '@angular/forms';
-import { Subject } from 'rxjs';
-import { takeUntil } from 'rxjs/operators';
 import { MatCardModule } from '@angular/material/card';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
@@ -21,7 +19,7 @@ import { Product } from '../core/models/product.model';
   selector: 'app-invoice-form',
   standalone: true,
   imports: [
-    CommonModule, ReactiveFormsModule,
+    CommonModule, ReactiveFormsModule, RouterModule,
     MatCardModule, MatFormFieldModule, MatInputModule, MatSelectModule,
     MatButtonModule, MatIconModule, MatProgressSpinnerModule, MatSnackBarModule, MatDividerModule,
   ],
@@ -32,16 +30,16 @@ import { Product } from '../core/models/product.model';
       </mat-card-header>
 
       <mat-card-content>
-        <div *ngIf="loadingProducts" class="loading-wrapper">
+        <div *ngIf="loadingProducts()" class="loading-wrapper">
           <mat-spinner diameter="40"></mat-spinner>
           <p>Carregando produtos...</p>
         </div>
 
-        <div *ngIf="productError" class="error-banner">
-          <mat-icon>error</mat-icon> {{ productError }}
+        <div *ngIf="productError()" class="error-banner">
+          <mat-icon>error</mat-icon> {{ productError() }}
         </div>
 
-        <form [formGroup]="form" (ngSubmit)="save()" *ngIf="!loadingProducts && !productError">
+        <form [formGroup]="form" (ngSubmit)="save()" *ngIf="!loadingProducts() && !productError()">
           <h3>Itens da Nota</h3>
 
           <div formArrayName="items">
@@ -49,7 +47,7 @@ import { Product } from '../core/models/product.model';
               <mat-form-field appearance="outline" class="product-field">
                 <mat-label>Produto</mat-label>
                 <mat-select formControlName="productId" (selectionChange)="onProductChange(i)">
-                  <mat-option *ngFor="let p of products" [value]="p.id">
+                  <mat-option *ngFor="let p of products()" [value]="p.id">
                     {{ p.code }} - {{ p.description }} (Saldo: {{ p.balance }})
                   </mat-option>
                 </mat-select>
@@ -78,9 +76,9 @@ import { Product } from '../core/models/product.model';
 
           <div class="form-actions">
             <button mat-button type="button" routerLink="/invoices">Cancelar</button>
-            <button mat-raised-button color="primary" type="submit" [disabled]="form.invalid || saving">
-              <mat-spinner *ngIf="saving" diameter="20" style="display:inline-block;margin-right:8px"></mat-spinner>
-              {{ saving ? 'Salvando...' : 'Criar Nota Fiscal' }}
+            <button mat-raised-button color="primary" type="submit" [disabled]="form.invalid || saving()">
+              <mat-spinner *ngIf="saving()" diameter="20" style="display:inline-block;margin-right:8px"></mat-spinner>
+              {{ saving() ? 'Salvando...' : 'Criar Nota Fiscal' }}
             </button>
           </div>
         </form>
@@ -99,13 +97,12 @@ import { Product } from '../core/models/product.model';
     .form-actions { display: flex; gap: 16px; justify-content: flex-end; }
   `]
 })
-export class InvoiceFormComponent implements OnInit, OnDestroy {
+export class InvoiceFormComponent implements OnInit {
   form!: FormGroup;
-  products: Product[] = [];
-  loadingProducts = false;
-  productError = '';
-  saving = false;
-  private destroy$ = new Subject<void>();
+  products = signal<Product[]>([]);
+  loadingProducts = signal(false);
+  productError = signal('');
+  saving = signal(false);
 
   constructor(
     private fb: FormBuilder,
@@ -120,8 +117,6 @@ export class InvoiceFormComponent implements OnInit, OnDestroy {
     this.loadProducts();
   }
 
-  ngOnDestroy() { this.destroy$.next(); this.destroy$.complete(); }
-
   get items(): FormArray { return this.form.get('items') as FormArray; }
 
   createItemGroup() {
@@ -132,12 +127,11 @@ export class InvoiceFormComponent implements OnInit, OnDestroy {
   }
 
   addItem() { this.items.push(this.createItemGroup()); }
-
   removeItem(i: number) { this.items.removeAt(i); }
 
   getMaxQty(i: number): number {
     const pid = this.items.at(i).get('productId')?.value;
-    const p = this.products.find(x => x.id === pid);
+    const p = this.products().find(x => x.id === pid);
     return p?.balance ?? 9999;
   }
 
@@ -148,29 +142,27 @@ export class InvoiceFormComponent implements OnInit, OnDestroy {
   }
 
   loadProducts() {
-    this.loadingProducts = true;
-    this.productService.getAll()
-      .pipe(takeUntil(this.destroy$))
-      .subscribe({
-        next: (data) => { this.products = data; this.loadingProducts = false; },
-        error: (err) => { this.productError = err.message; this.loadingProducts = false; }
-      });
+    this.loadingProducts.set(true);
+    this.productService.getAll().subscribe({
+      next: (data) => { this.products.set(data ?? []); this.loadingProducts.set(false); },
+      error: (err) => { this.productError.set(err.message); this.loadingProducts.set(false); }
+    });
   }
+
+  private readonly idempotencyKey = crypto.randomUUID();
 
   save() {
     if (this.form.invalid) return;
-    this.saving = true;
-    this.invoiceService.create({ items: this.form.value.items })
-      .pipe(takeUntil(this.destroy$))
-      .subscribe({
-        next: (inv) => {
-          this.snack.open('Nota fiscal criada!', 'OK', { duration: 3000 });
-          this.router.navigate(['/invoices', inv.id]);
-        },
-        error: (err) => {
-          this.snack.open(err.message, 'Fechar', { duration: 5000 });
-          this.saving = false;
-        }
-      });
+    this.saving.set(true);
+    this.invoiceService.create({ idempotencyKey: this.idempotencyKey, items: this.form.value.items }).subscribe({
+      next: (inv) => {
+        this.snack.open('Nota fiscal criada!', 'OK', { duration: 3000 });
+        this.router.navigate(['/invoices', inv.id]);
+      },
+      error: (err) => {
+        this.snack.open(err.message, 'Fechar', { duration: 5000 });
+        this.saving.set(false);
+      }
+    });
   }
 }

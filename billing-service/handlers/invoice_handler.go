@@ -112,42 +112,69 @@ func (h *InvoiceHandler) Print(c *gin.Context) {
 		return
 	}
 
+	updated, err := h.repo.CloseInvoice(id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "Erro ao fechar nota: " + err.Error()})
+		return
+	}
+	if updated == nil {
+		c.JSON(http.StatusConflict, gin.H{"message": "Esta nota já foi fechada por outra operação"})
+		return
+	}
+
 	if err := h.deductStock(inv); err != nil {
-		log.Printf("Stock deduction error: %v", err)
+		log.Printf("Stock deduction error, reopening invoice %d: %v", id, err)
+		_ = h.repo.ReopenInvoice(id)
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"message": "Falha ao atualizar estoque: " + err.Error(),
 		})
 		return
 	}
 
-	updated, err := h.repo.CloseInvoice(id)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "Nota impressa mas erro ao fechar: " + err.Error()})
-		return
-	}
 	c.JSON(http.StatusOK, updated)
 }
 
 func (h *InvoiceHandler) fetchProductDetails(items []models.CreateInvoiceItemRequest) (map[int64]struct{ Code, Description string }, error) {
-	result := make(map[int64]struct{ Code, Description string })
+	type fetchResult struct {
+		id   int64
+		code string
+		desc string
+		err  error
+	}
+
+	ch := make(chan fetchResult, len(items))
 	for _, item := range items {
-		resp, err := h.inventoryClient.Get(fmt.Sprintf("%s/api/products/%d", h.inventoryURL, item.ProductID))
-		if err != nil {
-			return nil, fmt.Errorf("serviço de estoque inacessível: %w", err)
+		go func(id int64) {
+			resp, err := h.inventoryClient.Get(fmt.Sprintf("%s/api/products/%d", h.inventoryURL, id))
+			if err != nil {
+				ch <- fetchResult{err: fmt.Errorf("serviço de estoque inacessível: %w", err)}
+				return
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				ch <- fetchResult{err: fmt.Errorf("produto %d não encontrado no estoque", id)}
+				return
+			}
+			var p struct {
+				Code        string `json:"code"`
+				Description string `json:"description"`
+			}
+			body, _ := io.ReadAll(resp.Body)
+			if err := json.Unmarshal(body, &p); err != nil {
+				ch <- fetchResult{err: err}
+				return
+			}
+			ch <- fetchResult{id: id, code: p.Code, desc: p.Description}
+		}(item.ProductID)
+	}
+
+	result := make(map[int64]struct{ Code, Description string }, len(items))
+	for range items {
+		r := <-ch
+		if r.err != nil {
+			return nil, r.err
 		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("produto %d não encontrado no estoque", item.ProductID)
-		}
-		var p struct {
-			Code        string `json:"code"`
-			Description string `json:"description"`
-		}
-		body, _ := io.ReadAll(resp.Body)
-		if err := json.Unmarshal(body, &p); err != nil {
-			return nil, err
-		}
-		result[item.ProductID] = struct{ Code, Description string }{p.Code, p.Description}
+		result[r.id] = struct{ Code, Description string }{r.code, r.desc}
 	}
 	return result, nil
 }

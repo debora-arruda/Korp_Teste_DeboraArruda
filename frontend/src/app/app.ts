@@ -9,7 +9,7 @@ import { MatIconModule } from '@angular/material/icon';
   standalone: true,
   imports: [RouterOutlet, RouterLink, RouterLinkActive, MatToolbarModule, MatButtonModule, MatIconModule],
   template: `
-    <mat-toolbar color="primary">
+    <mat-toolbar class="app-toolbar">
       <mat-icon>receipt_long</mat-icon>
       <span style="margin-left:8px">Sistema de Notas Fiscais</span>
       <span class="spacer"></span>
@@ -26,9 +26,11 @@ import { MatIconModule } from '@angular/material/icon';
     </main>
   `,
   styles: [`
+    .app-toolbar { background: #1976d2 !important; color: white !important; }
+    .app-toolbar mat-icon { color: white; }
     .spacer { flex: 1; }
-    mat-toolbar a { color: white; text-decoration: none; margin-left: 8px; }
-    .active-link { background: rgba(255,255,255,0.15); border-radius: 4px; }
+    a[mat-button] { color: white !important; text-decoration: none; margin-left: 8px; }
+    .active-link { background: rgba(255,255,255,0.15) !important; border-radius: 4px; }
     main { background: #f5f5f5; min-height: calc(100vh - 64px); }
   `]
 })

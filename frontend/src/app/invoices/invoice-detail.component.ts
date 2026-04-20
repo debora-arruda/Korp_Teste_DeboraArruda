@@ -1,8 +1,6 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, RouterModule } from '@angular/router';
-import { Subject } from 'rxjs';
-import { takeUntil, switchMap } from 'rxjs/operators';
 import { MatCardModule } from '@angular/material/card';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -25,31 +23,29 @@ import { Invoice } from '../core/models/invoice.model';
   ],
   template: `
     <div class="page-wrapper">
-      <div *ngIf="loading" class="loading-wrapper">
+      <div *ngIf="loading()" class="loading-wrapper">
         <mat-spinner diameter="60"></mat-spinner>
       </div>
 
-      <div *ngIf="error" class="error-banner">
-        <mat-icon>error</mat-icon> {{ error }}
+      <div *ngIf="error()" class="error-banner">
+        <mat-icon>error</mat-icon> {{ error() }}
         <button mat-button (click)="load()">Tentar novamente</button>
       </div>
 
-      <mat-card *ngIf="invoice && !loading" class="invoice-card">
+      <mat-card *ngIf="invoice() && !loading()" class="invoice-card">
         <mat-card-header>
-          <mat-card-title>Nota Fiscal #{{ invoice.number }}</mat-card-title>
+          <mat-card-title>Nota Fiscal #{{ invoice()!.number }}</mat-card-title>
           <span class="spacer"></span>
-          <mat-chip [color]="invoice.status === 'open' ? 'primary' : 'accent'" highlighted>
-            {{ invoice.status === 'open' ? 'Aberta' : 'Fechada' }}
+          <mat-chip [color]="invoice()!.status === 'open' ? 'primary' : 'accent'" highlighted>
+            {{ invoice()!.status === 'open' ? 'Aberta' : 'Fechada' }}
           </mat-chip>
         </mat-card-header>
 
         <mat-card-content>
-          <p class="date">Emitida em: {{ invoice.createdAt | date:'dd/MM/yyyy HH:mm' }}</p>
-
+          <p class="date">Emitida em: {{ invoice()!.createdAt | date:'dd/MM/yyyy HH:mm' }}</p>
           <mat-divider></mat-divider>
-
           <h3>Produtos</h3>
-          <table mat-table [dataSource]="invoice.items" class="items-table">
+          <table mat-table [dataSource]="invoice()!.items" class="items-table">
             <ng-container matColumnDef="code">
               <th mat-header-cell *matHeaderCellDef>Código</th>
               <td mat-cell *matCellDef="let item">{{ item.productCode }}</td>
@@ -62,7 +58,6 @@ import { Invoice } from '../core/models/invoice.model';
               <th mat-header-cell *matHeaderCellDef>Quantidade</th>
               <td mat-cell *matCellDef="let item">{{ item.quantity }}</td>
             </ng-container>
-
             <tr mat-header-row *matHeaderRowDef="columns"></tr>
             <tr mat-row *matRowDef="let row; columns: columns;"></tr>
           </table>
@@ -77,15 +72,15 @@ import { Invoice } from '../core/models/invoice.model';
             mat-raised-button
             color="primary"
             (click)="print()"
-            [disabled]="invoice.status !== 'open' || printing"
+            [disabled]="invoice()!.status !== 'open' || printing()"
             class="print-btn">
-            <mat-spinner *ngIf="printing" diameter="20" style="display:inline-block;margin-right:8px"></mat-spinner>
-            <mat-icon *ngIf="!printing">print</mat-icon>
-            {{ printing ? 'Processando...' : 'Imprimir Nota' }}
+            <mat-spinner *ngIf="printing()" diameter="20" style="display:inline-block;margin-right:8px"></mat-spinner>
+            <mat-icon *ngIf="!printing()">print</mat-icon>
+            {{ printing() ? 'Processando...' : 'Imprimir Nota' }}
           </button>
         </mat-card-actions>
 
-        <div *ngIf="invoice.status === 'closed'" class="closed-notice">
+        <div *ngIf="invoice()!.status === 'closed'" class="closed-notice">
           <mat-icon>lock</mat-icon> Esta nota já foi impressa e está fechada.
         </div>
       </mat-card>
@@ -109,13 +104,12 @@ import { Invoice } from '../core/models/invoice.model';
     }
   `]
 })
-export class InvoiceDetailComponent implements OnInit, OnDestroy {
-  invoice: Invoice | null = null;
+export class InvoiceDetailComponent implements OnInit {
+  invoice = signal<Invoice | null>(null);
+  loading = signal(false);
+  printing = signal(false);
+  error = signal('');
   columns = ['code', 'description', 'quantity'];
-  loading = false;
-  printing = false;
-  error = '';
-  private destroy$ = new Subject<void>();
 
   constructor(
     private invoiceService: InvoiceService,
@@ -125,35 +119,30 @@ export class InvoiceDetailComponent implements OnInit, OnDestroy {
 
   ngOnInit() { this.load(); }
 
-  ngOnDestroy() { this.destroy$.next(); this.destroy$.complete(); }
-
   load() {
-    this.loading = true;
-    this.error = '';
+    this.loading.set(true);
+    this.error.set('');
     const id = Number(this.route.snapshot.paramMap.get('id'));
-    this.invoiceService.getById(id)
-      .pipe(takeUntil(this.destroy$))
-      .subscribe({
-        next: (inv) => { this.invoice = inv; this.loading = false; },
-        error: (err) => { this.error = err.message; this.loading = false; }
-      });
+    this.invoiceService.getById(id).subscribe({
+      next: (inv) => { this.invoice.set(inv); this.loading.set(false); },
+      error: (err) => { this.error.set(err.message); this.loading.set(false); }
+    });
   }
 
   print() {
-    if (!this.invoice || this.invoice.status !== 'open') return;
-    this.printing = true;
-    this.invoiceService.print(this.invoice.id)
-      .pipe(takeUntil(this.destroy$))
-      .subscribe({
-        next: (updated) => {
-          this.invoice = updated;
-          this.printing = false;
-          this.snack.open('Nota fiscal impressa e fechada com sucesso!', 'OK', { duration: 4000 });
-        },
-        error: (err) => {
-          this.printing = false;
-          this.snack.open(err.message, 'Fechar', { duration: 6000 });
-        }
-      });
+    const inv = this.invoice();
+    if (!inv || inv.status !== 'open') return;
+    this.printing.set(true);
+    this.invoiceService.print(inv.id).subscribe({
+      next: (updated) => {
+        this.invoice.set(updated);
+        this.printing.set(false);
+        this.snack.open('Nota fiscal impressa e fechada com sucesso!', 'OK', { duration: 4000 });
+      },
+      error: (err) => {
+        this.printing.set(false);
+        this.snack.open(err.message, 'Fechar', { duration: 6000 });
+      }
+    });
   }
 }

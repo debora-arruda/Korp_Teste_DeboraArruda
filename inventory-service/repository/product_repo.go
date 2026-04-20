@@ -26,7 +26,9 @@ func (r *ProductRepository) Migrate() error {
 			balance     INT NOT NULL DEFAULT 0 CHECK (balance >= 0),
 			created_at  TIMESTAMPTZ DEFAULT NOW(),
 			updated_at  TIMESTAMPTZ DEFAULT NOW()
-		)
+		);
+		CREATE INDEX IF NOT EXISTS idx_products_code ON products(code);
+		CREATE INDEX IF NOT EXISTS idx_products_id ON products(id);
 	`)
 	return err
 }

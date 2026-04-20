@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"database/sql"
+	"time"
+)
 
 type InvoiceStatus string
 
@@ -19,12 +22,13 @@ type InvoiceItem struct {
 }
 
 type Invoice struct {
-	ID        int64         `db:"id" json:"id"`
-	Number    int64         `db:"number" json:"number"`
-	Status    InvoiceStatus `db:"status" json:"status"`
-	CreatedAt time.Time     `db:"created_at" json:"createdAt"`
-	UpdatedAt time.Time     `db:"updated_at" json:"updatedAt"`
-	Items     []InvoiceItem `db:"-" json:"items"`
+	ID             int64          `db:"id" json:"id"`
+	Number         int64          `db:"number" json:"number"`
+	Status         InvoiceStatus  `db:"status" json:"status"`
+	IdempotencyKey sql.NullString `db:"idempotency_key" json:"-"`
+	CreatedAt      time.Time      `db:"created_at" json:"createdAt"`
+	UpdatedAt      time.Time      `db:"updated_at" json:"updatedAt"`
+	Items          []InvoiceItem  `db:"-" json:"items"`
 }
 
 type CreateInvoiceItemRequest struct {
@@ -33,5 +37,6 @@ type CreateInvoiceItemRequest struct {
 }
 
 type CreateInvoiceRequest struct {
-	Items []CreateInvoiceItemRequest `json:"items" binding:"required,min=1"`
+	IdempotencyKey string                     `json:"idempotencyKey"`
+	Items          []CreateInvoiceItemRequest `json:"items" binding:"required,min=1"`
 }

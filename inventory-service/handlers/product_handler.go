@@ -1,12 +1,18 @@
 package handlers
 
 import (
+	"bytes"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"inventory-service/models"
 	"inventory-service/repository"
 	"net/http"
+	"os"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -26,6 +32,7 @@ func (h *ProductHandler) RegisterRoutes(r *gin.RouterGroup) {
 	r.PUT("/products/:id", h.Update)
 	r.DELETE("/products/:id", h.Delete)
 	r.POST("/products/deduct", h.DeductStock)
+	r.POST("/products/suggest-description", h.SuggestDescription)
 }
 
 func (h *ProductHandler) List(c *gin.Context) {
@@ -123,4 +130,63 @@ func (h *ProductHandler) DeductStock(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Saldo atualizado com sucesso"})
+}
+
+func (h *ProductHandler) SuggestDescription(c *gin.Context) {
+	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+	if apiKey == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"message": "IA não configurada: defina a variável ANTHROPIC_API_KEY"})
+		return
+	}
+	var req struct {
+		Code string `json:"code" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "Código do produto obrigatório"})
+		return
+	}
+	description, err := callClaudeAPI(apiKey, req.Code)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"message": "Erro ao consultar IA: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"description": description})
+}
+
+func callClaudeAPI(apiKey, productCode string) (string, error) {
+	prompt := fmt.Sprintf(
+		"Sugira uma descrição comercial curta e objetiva (máximo 80 caracteres) para um produto com o código: %s. Responda apenas com a descrição, sem explicações adicionais.",
+		productCode,
+	)
+	payload := map[string]interface{}{
+		"model":      "claude-haiku-4-5-20251001",
+		"max_tokens": 150,
+		"messages":   []map[string]string{{"role": "user", "content": prompt}},
+	}
+	bodyBytes, _ := json.Marshal(payload)
+	req, err := http.NewRequest(http.MethodPost, "https://api.anthropic.com/v1/messages", bytes.NewReader(bodyBytes))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("x-api-key", apiKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("content-type", "application/json")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	var result struct {
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil || len(result.Content) == 0 {
+		return "", fmt.Errorf("resposta inválida da API de IA")
+	}
+	return result.Content[0].Text, nil
 }

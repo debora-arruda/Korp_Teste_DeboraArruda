@@ -13,7 +13,6 @@ export class InvoiceService {
 
   getAll(): Observable<Invoice[]> {
     return this.http.get<Invoice[]>(this.url).pipe(
-      retry(1),
       catchError(this.handleError)
     );
   }
